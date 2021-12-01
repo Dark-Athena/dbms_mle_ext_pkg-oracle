@@ -1,5 +1,3 @@
-# dbms_mle_ext_pkg-oracle
-dbms_mle_ext_pkg for oracle 21c
 ## 项目地址：
 [https://github.com/Dark-Athena/dbms_mle_ext_pkg-oracle](https://github.com/Dark-Athena/dbms_mle_ext_pkg-oracle)
 ## 开发目的：
@@ -10,7 +8,7 @@ dbms_mle_ext_pkg for oracle 21c
 - 你只需要了解plsql及js两种语言各自的语法，无需了解mle的特定语法
 
 ## 注意事项：
-由于高度封装且可自由定义参数名称及参数个数，因此对于输入或输出参数的任意一个列表，暂只支持NUMBER/VARCHAR2参数的混用及CLOB参数的单独使用
+由于可自由定义参数名称及参数个数，因此对于输入或输出参数的任意一个列表，暂只支持NUMBER/VARCHAR2参数的混用或CLOB参数的单独使用
 
 
 ## 案例
@@ -87,7 +85,7 @@ qrcode_pic = code.createDataURL(4);
 end;
 /
 ```
-### 例4：从一个clob参数导入js模块
+### 例4：从一个clob变量导入js模块
 ```sql
 --example 4 import js module from a clob value
 declare
