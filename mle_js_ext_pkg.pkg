@@ -1,0 +1,216 @@
+create or replace package mle_js_ext_pkg is
+  -- Author  : DarkAthena (darkathena@qq.com)                
+  -- Created : 2021/12/01 22:39:00
+  -- Purpose : dbms_mle ext pkg
+  -- memo    : https://github.com/Dark-Athena/dbms_mle_ext_pkg-oracle
+  /*
+  Copyright DarkAthena(darkathena@qq.com)
+  
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+     You may obtain a copy of the License at
+  
+         http://www.apache.org/licenses/LICENSE-2.0
+  
+     Unless required by applicable law or agreed to in writing, software
+     distributed under the License is distributed on an "AS IS" BASIS,
+     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     See the License for the specific language governing permissions and
+     limitations under the License.
+  */
+
+  g_content_type varchar2(400) := 'application/json';
+  type parameter is record(
+    p_type  varchar2(100) default 'VARCHAR2',
+    p_value varchar2(32767));
+  type parameter_list is table of parameter INDEX BY VARCHAR2(100);
+  type parameter_list_clob is table of clob index by VARCHAR2(100);
+  FUNCTION post(i_url VARCHAR2, i_post_data CLOB default ' ') RETURN clob;
+  procedure import_module(i_src in out clob, i_import clob);
+  procedure import_module(i_src in out clob, i_url varchar2);
+  procedure import_module(i_src      in out clob,
+                          i_dir      varchar2,
+                          i_filename varchar2);
+  procedure import_module(i_src in out clob, i_sql varchar2);
+  procedure exec_js(i_js_code   clob,
+                    i_parameter parameter_list default parameter_list(),
+                    o_parameter in out parameter_list,
+                    i_js_source clob default null);
+  procedure exec_js(i_js_code   clob,
+                    i_parameter parameter_list default parameter_list(),
+                    o_parameter in out parameter_list_clob,
+                    i_js_source clob default null);
+end mle_js_ext_pkg;
+/
+create or replace package body mle_js_ext_pkg is
+
+  FUNCTION post(i_url VARCHAR2, i_post_data CLOB default ' ') RETURN clob IS
+    req    utl_http.req;
+    resp   utl_http.resp;
+    VALUE  varchar2(4000);
+    L_CLOB clob;
+  
+  BEGIN
+  
+    req := utl_http.begin_request(i_url, 'POST', 'HTTP/1.1');
+    utl_http.set_header(req, 'Content-Type', g_content_type);
+    --'application/x-www-form-urlencoded'
+    --'application/json'
+    utl_http.set_header(req,
+                        'Content-Length',
+                        dbms_lob.getlength(i_post_data));
+  
+    DECLARE
+      sizeb  INTEGER := 1440;
+      buffer VARCHAR2(1440);
+      offset INTEGER DEFAULT 1;
+    BEGIN
+      LOOP
+        BEGIN
+          dbms_lob.read(i_post_data, sizeb, offset, buffer);
+        EXCEPTION
+          WHEN no_data_found THEN
+            EXIT;
+        END;
+        offset := offset + sizeb;
+        utl_http.write_text(req, buffer);
+      END LOOP;
+    END;
+  
+    resp := utl_http.get_response(req);
+    begin
+      L_CLOB := empty_clob();
+      dbms_lob.createtemporary(L_CLOB, true);
+      LOOP
+        UTL_HTTP.read_text(resp, value, 4000);
+        dbms_lob.append(dest_lob => L_CLOB, src_lob => value);
+      END LOOP;
+      utl_http.end_response(resp);
+      RETURN L_CLOB;
+    EXCEPTION
+       WHEN UTL_HTTP.END_OF_BODY THEN
+        UTL_HTTP.END_RESPONSE(resp);
+        RETURN L_CLOB;
+      WHEN OTHERS THEN
+        utl_http.close_persistent_conns;
+        utl_tcp.close_all_connections;
+        dbms_output.put_line(SQLERRM);
+        Raise_application_error(-20000, SQLERRM);
+    END;
+  end;
+
+  procedure import_module(i_src in out clob, i_import clob) is
+  begin
+    if i_src is null then 
+      dbms_lob.createtemporary(i_src, true);
+      end if;
+    dbms_lob.append(dest_lob => i_src, src_lob => i_import);
+  end;
+
+  procedure import_module(i_src in out clob, i_url varchar2) is
+  begin
+    import_module(i_src, post(i_url));
+  end;
+  
+  procedure import_module(i_src in out clob, i_dir varchar2,i_filename varchar2) is
+  begin
+    import_module(i_src, to_clob(bfilename(i_dir,i_filename)));
+  end;
+  
+  procedure import_module(i_src in out clob, i_sql varchar2) is
+    l_clob clob;
+  begin
+    L_CLOB := empty_clob();
+    dbms_lob.createtemporary(L_CLOB, true);
+     execute immediate i_sql into L_CLOB;
+    import_module(i_src, L_CLOB);
+  end;
+  
+  procedure exec_js(i_js_code clob,
+                    i_parameter parameter_list default parameter_list(),
+                    o_parameter in out parameter_list ,
+                    i_js_source clob default null)  
+                    is 
+    l_clob clob;
+    ctx        dbms_mle.context_handle_t;
+    l_exec_js_code clob;
+    l_parameter_list clob;
+    l_out_str varchar2(32767);
+    l_out_num number;
+    begin
+    ctx:= dbms_mle.create_context();
+    dbms_lob.createtemporary(l_exec_js_code, false);
+    dbms_lob.append(l_exec_js_code,'var bindings = require("mle-js-bindings");'||chr(10));
+    for p_name,p_value in PAIRS OF i_parameter loop
+      if p_value.p_type='NUMBER' then 
+         dbms_mle.export_to_mle(ctx, p_name, to_number(p_value.p_value));
+         else 
+     dbms_mle.export_to_mle(ctx, p_name, p_value.p_value);
+      end if;
+      dbms_lob.append(l_exec_js_code,'var '||p_name||' = bindings.importValue("'||p_name||'")'||chr(10));
+    end loop;
+        dbms_lob.append(l_exec_js_code,i_js_code);
+    for p_name in indices OF o_parameter loop  
+              dbms_lob.append(l_exec_js_code,'bindings.exportValue("'||p_name||'", '||p_name||')'||chr(10));
+    end loop;
+     dbms_lob.createtemporary(l_clob, false);
+     if i_js_source is not null then 
+       dbms_lob.append(l_clob, i_js_source);
+       dbms_lob.append(l_clob, chr(10));
+     end if;
+     dbms_lob.append(l_clob, l_exec_js_code);
+     dbms_mle.eval(ctx, 'JAVASCRIPT', l_clob);
+     for p_name,p_value in PAIRS OF o_parameter loop 
+       if p_value.p_type='NUMBER' then
+        dbms_mle.import_from_mle(ctx, p_name, l_out_num);
+        o_parameter(p_name).p_value:=l_out_num;
+       else 
+        dbms_mle.import_from_mle(ctx, p_name, l_out_str);
+        o_parameter(p_name).p_value:=l_out_str;
+       end if;
+     end loop;
+     dbms_mle.drop_context(ctx);
+    end;
+    
+procedure exec_js(i_js_code clob,
+                    i_parameter parameter_list default parameter_list(),
+                    o_parameter in out parameter_list_clob ,
+                    i_js_source clob default null)  
+                    is 
+    l_clob clob;
+    ctx        dbms_mle.context_handle_t;
+    l_exec_js_code clob;
+    l_parameter_list clob;
+    l_out_str clob;
+    l_out_num number;
+    begin
+    ctx:= dbms_mle.create_context();
+    dbms_lob.createtemporary(l_exec_js_code, false);
+    dbms_lob.append(l_exec_js_code,'var bindings = require("mle-js-bindings");'||chr(10));
+    for p_name,p_value in PAIRS OF i_parameter loop
+      if p_value.p_type='NUMBER' then 
+         dbms_mle.export_to_mle(ctx, p_name, to_number(p_value.p_value));
+         else 
+     dbms_mle.export_to_mle(ctx, p_name, p_value.p_value);
+      end if;
+      dbms_lob.append(l_exec_js_code,'var '||p_name||' = bindings.importValue("'||p_name||'")'||chr(10));
+    end loop;
+        dbms_lob.append(l_exec_js_code,i_js_code);
+    for p_name in indices OF o_parameter loop  
+              dbms_lob.append(l_exec_js_code,'bindings.exportValue("'||p_name||'", '||p_name||')'||chr(10));
+    end loop;
+     dbms_lob.createtemporary(l_clob, false);
+     if i_js_source is not null then 
+       dbms_lob.append(l_clob, i_js_source);
+       dbms_lob.append(l_clob, chr(10));
+     end if;
+     dbms_lob.append(l_clob, l_exec_js_code);
+     dbms_mle.eval(ctx, 'JAVASCRIPT', l_clob);
+     for p_name,p_value in PAIRS OF o_parameter loop 
+        dbms_mle.import_from_mle(ctx, p_name, l_out_str);
+        o_parameter(p_name):=l_out_str;
+     end loop;
+     dbms_mle.drop_context(ctx);
+    end;    
+end mle_js_ext_pkg;
+/
