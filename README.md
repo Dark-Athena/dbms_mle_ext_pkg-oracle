@@ -151,3 +151,6 @@ begin
 end;
 /
 ```
+
+## 相关文章
+[【ORACLE】关于21c版本新增plsql包DBMS_MLE的研究](https://www.darkathena.top/archives/about-dbmsmle)
